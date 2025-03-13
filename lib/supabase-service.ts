@@ -16,6 +16,19 @@ export interface ChatbotClient {
   user_id: string;
 }
 
+export interface UserWithStats {
+  user: {
+    id: string;
+    email: string;
+  };
+  totalSessions: number;
+  totalRevenue: number;
+  messageCount: number;
+  leads: number;
+  leadScore: number;
+  lastActive: Date | null;
+}
+
 export interface ChatbotUsage {
   id: string;
   client_id: string;
@@ -252,4 +265,142 @@ export async function fetchClientStats(): Promise<ClientWithStats[]> {
     console.error("Error fetching client stats:", error);
     return [];
   }
-} 
+}
+
+export async function fetchActiveUserStats(): Promise<UserWithStats[]> {
+  try {
+    // Get paying users from user_subscription table
+    const { data: activeSubscriptions, error: subscriptionError } = await supabase
+      .from('user_subscriptions')
+      .select('user_id, status')
+      .eq('status', 'active');
+
+    if (subscriptionError) {
+      console.error("Error fetching active subscriptions:", subscriptionError);
+      throw subscriptionError;
+    }
+
+    if (!activeSubscriptions || activeSubscriptions.length === 0) {
+      return [];
+    }
+
+    // Get user IDs of active subscribers
+    const activeUserIds = activeSubscriptions.map(sub => sub.user_id);
+
+    // Fetch user info
+    const { data: users, error: userError } = await supabase
+      .from('users')
+      .select('id, email')
+      .in('id', activeUserIds);
+
+    if (userError) {
+      console.error("Error fetching users:", userError);
+      throw userError;
+    }
+
+    // Fetch sessions for these users
+    const { data: sessions, error: sessionError } = await supabase
+      .from('session')
+      .select('*')
+      .in('user_id', activeUserIds);
+
+    if (sessionError) {
+      console.error("Error fetching sessions:", sessionError);
+      throw sessionError;
+    }
+
+    // Fetch leads for these users
+    const { data: leads, error: leadError } = await supabase
+      .from('leads')
+      .select('*')
+      .in('user_id', activeUserIds);
+
+    if (leadError) {
+      console.error("Error fetching leads:", leadError);
+      throw leadError;
+    }
+
+    // Fetch payment history for revenue calculation
+    const { data: payments, error: paymentError } = await supabase
+      .from('payment_history')
+      .select('*')
+      .in('user_id', activeUserIds)
+      .eq('status', 'succeeded');
+
+    if (paymentError) {
+      console.error("Error fetching payment history:", paymentError);
+      throw paymentError;
+    }
+
+    // First, get all session IDs from the sessions we fetched
+    const sessionIds = sessions.map(session => session.id);
+    
+    // Only proceed with messages query if we have session IDs
+    let messages = [];
+    if (sessionIds.length > 0) {
+      const { data: messagesData, error: messageError } = await supabase
+        .from('messages')
+        .select('*')
+        .in('session_id', sessionIds);
+
+      if (messageError) {
+        console.error("Error fetching messages:", messageError);
+        throw messageError;
+      }
+      
+      messages = messagesData || [];
+    }
+
+    // Compile stats for each user
+    const userStats: UserWithStats[] = users.map(user => {
+      // Get all sessions for this user
+      const userSessions = sessions.filter(session => session.user_id === user.id);
+      
+      // Get all leads for this user
+      const userLeads = leads.filter(lead => lead.user_id === user.id);
+      
+      // Get payment history for this user
+      const userPayments = payments.filter(payment => payment.user_id === user.id);
+      
+      // Calculate total revenue
+      const totalRevenue = userPayments.reduce((sum, payment) => sum + Number(payment.amount), 0);
+      
+      // Calculate lead score (average if there are leads)
+      const leadScores = userLeads.map(lead => lead.lead_score).filter(Boolean);
+      const avgLeadScore = leadScores.length > 0 
+        ? leadScores.reduce((sum, score) => sum + score, 0) / leadScores.length
+        : 0;
+      
+      // Find messages associated with this user's sessions
+      const sessionIdsForUser = userSessions.map(session => session.id);
+      const userMessages = messages.filter(msg => sessionIdsForUser.includes(msg.session_id));
+      
+      // Find last active timestamp
+      const lastActiveDates = userSessions
+        .filter(session => session.last_active)
+        .map(session => new Date(session.last_active));
+      
+      const lastActive = lastActiveDates.length > 0
+        ? new Date(Math.max(...lastActiveDates.map(date => date.getTime())))
+        : null;
+      
+      return {
+        user: {
+          id: user.id,
+          email: user.email
+        },
+        totalSessions: userSessions.length,
+        totalRevenue,
+        messageCount: userMessages.length,
+        leads: userLeads.length,
+        leadScore: avgLeadScore,
+        lastActive
+      };
+    });
+
+    return userStats;
+  } catch (error) {
+    console.error("Error in fetchActiveUserStats:", error);
+    throw error;
+  }
+}
