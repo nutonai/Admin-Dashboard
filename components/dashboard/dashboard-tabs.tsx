@@ -10,17 +10,17 @@ export function DashboardTabs() {
     <Tabs defaultValue="overview" className="space-y-4">
       <TabsList className="grid w-full grid-cols-3 md:w-auto">
         <TabsTrigger value="overview">Overview</TabsTrigger>
-        <TabsTrigger value="contacts">Contacts</TabsTrigger>
-        <TabsTrigger value="subscriptions">Subscriptions</TabsTrigger>
+        <TabsTrigger value="contacts">Subscriptions</TabsTrigger>
+        <TabsTrigger value="subscriptions">Contacts</TabsTrigger>
       </TabsList>
       <TabsContent value="overview" className="space-y-4">
         <OverviewTab />
       </TabsContent>
       <TabsContent value="contacts" className="space-y-4">
-        <ContactSubmissionsTab />
+        <SubscriptionsTab />
       </TabsContent>
       <TabsContent value="subscriptions" className="space-y-4">
-        <SubscriptionsTab />
+        <ContactSubmissionsTab />
       </TabsContent>
     </Tabs>
   );

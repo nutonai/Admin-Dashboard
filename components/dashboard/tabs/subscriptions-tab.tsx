@@ -47,7 +47,7 @@ export function SubscriptionsTab() {
         // 1. Fetch data from the users table - this has email and created_at
         const { data: usersData, error: usersError } = await supabase
           .from('users')
-          .select('id, email, created_at');
+          .select('id, email, name, created_at');
   
         if (usersError) {
           console.error("Users data error:", usersError);
@@ -325,7 +325,7 @@ export function SubscriptionsTab() {
           
           return {
             id: user.id,
-            name: user.email?.split('@')[0] || `User ${user.id.substring(0, 8)}`,
+            name: user.name || user.email?.split('@')[0] || `User ${user.id.substring(0, 8)}`,
             email: user.email || `user-${user.id.substring(0, 5)}@example.com`,
             website: websiteMap.get(user.id) || "",
             dateSignedUp: user.created_at || "",
@@ -408,41 +408,6 @@ export function SubscriptionsTab() {
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-4 md:grid-cols-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Active Subscribers</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{activeUsers}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Messages</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{totalMessages}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Leads</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{totalLeads}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Revenue</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">${totalRevenue.toFixed(2)}</div>
-          </CardContent>
-        </Card>
-      </div>
-
       {userData.length === 0 ? (
         <div className="py-8 text-center">
           <h3 className="text-lg font-medium mb-2">No subscription data found</h3>
