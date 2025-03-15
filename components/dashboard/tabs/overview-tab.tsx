@@ -56,26 +56,6 @@ interface UserPlanDetail {
   planName: string;
 }
 
-interface PlanCount {
-  planName: string;
-  count: number;
-}
-
-// Type for nested Supabase response
-interface UserSubscriptionWithRelations {
-  id: string;
-  user_id: string;
-  plan_id: string;
-  status: string;
-  users: { 
-    name: string | null; 
-    email: string | null;
-  };
-  subscription_plans: {
-    name: string | null;
-  };
-}
-
 export function OverviewTab() {
   const [userBaseStats, setUserBaseStats] = useState<UserBaseStats>({
     contactLeads: 0,
@@ -87,7 +67,6 @@ export function OverviewTab() {
   const [planDistribution, setPlanDistribution] = useState<PlanDistribution[]>([]);
   const [planDetails, setPlanDetails] = useState<PlanDetails[]>([]);
   const [userPlanDetails, setUserPlanDetails] = useState<UserPlanDetail[]>([]);
-  const [planCounts, setPlanCounts] = useState<PlanCount[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -113,7 +92,6 @@ export function OverviewTab() {
         await fetchMonthlyGrowthData();
         await fetchPlanData();
         await fetchUserPlanDetails();
-        await fetchPlanCounts();
         
         setLoading(false);
       } catch (error) {
@@ -186,126 +164,84 @@ export function OverviewTab() {
     try {
       console.log("Fetching monthly growth data...");
       
-      // Get the current date and calculate 5 months ago
-      const now = new Date();
-      const fiveMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 4, 1);
+      // Get the current date
+      const currentDate = new Date();
       
-      // Fetch users registered in the last 5 months
-      const { data: recentUsers, error: usersError } = await supabase
+      // Set up month names - use the last 5 months
+      const months = [];
+      for (let i = 4; i >= 0; i--) {
+        const date = new Date(currentDate);
+        date.setMonth(currentDate.getMonth() - i);
+        months.push({
+          name: date.toLocaleString('default', { month: 'short' }),
+          year: date.getFullYear(),
+          month: date.getMonth() + 1, // JavaScript months are 0-indexed
+        });
+      }
+
+      // Get all users with creation dates
+      const { data: users, error: usersError } = await supabase
         .from('users')
-        .select('created_at')
-        .gte('created_at', fiveMonthsAgo.toISOString());
+        .select('id, created_at');
       
       if (usersError) {
         console.error("Error fetching users for monthly growth:", usersError);
         return;
       }
       
-      // Fetch paid users in the last 5 months
-      const { data: recentPaidUsers, error: paidUsersError } = await supabase
+      // Get all subscriptions with creation dates and status
+      const { data: subscriptions, error: subscriptionsError } = await supabase
         .from('user_subscriptions')
-        .select('created_at')
-        .eq('status', 'active')
-        .gte('created_at', fiveMonthsAgo.toISOString());
+        .select('user_id, created_at, status');
       
-      if (paidUsersError) {
-        console.error("Error fetching paid users for monthly growth:", paidUsersError);
+      if (subscriptionsError) {
+        console.error("Error fetching subscriptions for monthly growth:", subscriptionsError);
         return;
       }
       
-      console.log(`Retrieved ${recentUsers?.length || 0} recent users and ${recentPaidUsers?.length || 0} recent paid users`);
-      
-      // Prepare monthly data
-      const monthNames = ['Mar', 'Apr', 'May', 'Jun', 'Jul']; // Last 5 months
-      const growthData: MonthlyGrowthData[] = [];
-      
-      for (let i = 0; i < 5; i++) {
-        const monthStart = new Date(now.getFullYear(), now.getMonth() - 4 + i, 1);
-        const monthEnd = new Date(now.getFullYear(), now.getMonth() - 3 + i, 0);
-        
-        // Count users for this month
-        const usersInMonth = recentUsers?.filter(user => {
-          const date = new Date(user.created_at);
-          return date >= monthStart && date <= monthEnd;
+      // Calculate monthly data based on registration dates
+      const growthData = months.map(monthData => {
+        // Count users registered in this month
+        const usersInMonth = users?.filter(user => {
+          if (!user.created_at) return false;
+          
+          const createdAt = new Date(user.created_at);
+          return createdAt.getMonth() + 1 === monthData.month && 
+                 createdAt.getFullYear() === monthData.year;
         }).length || 0;
         
-        // Count paid users for this month
-        const paidUsersInMonth = recentPaidUsers?.filter(user => {
-          const date = new Date(user.created_at);
-          return date >= monthStart && date <= monthEnd;
+        // Count paid users registered in this month
+        const paidUsersInMonth = subscriptions?.filter(sub => {
+          if (!sub.created_at || sub.status !== 'active') return false;
+          
+          const createdAt = new Date(sub.created_at);
+          return createdAt.getMonth() + 1 === monthData.month && 
+                 createdAt.getFullYear() === monthData.year;
         }).length || 0;
         
-        growthData.push({
-          month: monthNames[i],
+        return {
+          month: monthData.name,
           totalUsers: usersInMonth,
           paidUsers: paidUsersInMonth
-        });
-      }
+        };
+      });
       
       console.log("Monthly growth data:", growthData);
       
-      // Update state with real data
       setMonthlyGrowth(growthData);
     } catch (error) {
       console.error("Error in fetchMonthlyGrowthData:", error);
     }
   }
 
-  async function fetchUserPlanDetails() {
-    try {
-      console.log("Fetching user plan details...");
-      
-      // Query with proper join syntax for Supabase
-      const { data, error } = await supabase
-        .from('user_subscriptions')
-        .select(`
-          id,
-          user_id,
-          plan_id,
-          users!user_id(name, email),
-          subscription_plans!plan_id(name)
-        `)
-        .eq('status', 'active');
-      
-      if (error) {
-        console.error("Error fetching user plan details:", error);
-        return;
-      }
-      
-      if (!data || data.length === 0) {
-        console.log("No user plan details found");
-        return;
-      }
-      
-      // Type assertion to help TypeScript understand the structure
-      const typedData = data as unknown as UserSubscriptionWithRelations[];
-      
-      // Transform the data to match our interface
-      const userPlanData: UserPlanDetail[] = typedData.map(item => {
-        return {
-          userId: item.user_id,
-          userName: item.users ? (item.users.name || item.users.email || 'Unknown User') : 'Unknown User',
-          planName: item.subscription_plans ? item.subscription_plans.name || 'Unknown Plan' : 'Unknown Plan'
-        };
-      });
-      
-      console.log(`Fetched ${userPlanData.length} user plan details`);
-      setUserPlanDetails(userPlanData);
-    } catch (error) {
-      console.error("Error in fetchUserPlanDetails:", error);
-    }
-  }
-
   async function fetchPlanData() {
     try {
-      console.log("Fetching plan data from Supabase directly...");
+      console.log("Fetching plan data...");
       
-      // Get the three plan types: Starter, Pro, and Ultra
+      // Step 1: Get all subscription plans
       const { data: plans, error: plansError } = await supabase
         .from('subscription_plans')
-        .select('id, name, monthly_price')
-        .or('name.ilike.%starter%,name.ilike.%pro%,name.ilike.%ultra%')
-        .order('monthly_price');
+        .select('id, plan_id, name, monthly_price');
       
       if (plansError) {
         console.error("Error fetching subscription plans:", plansError);
@@ -313,128 +249,144 @@ export function OverviewTab() {
       }
       
       if (!plans || plans.length === 0) {
-        console.error("No subscription plans found in the database");
+        console.log("No subscription plans found");
         return;
       }
       
-      console.log("Found plans:", plans.map(p => p.name).join(", "));
+      console.log(`Found ${plans.length} subscription plans`);
       
-      // Get direct counts for each plan
-      const planResults = await Promise.all(
-        plans.map(async (plan) => {
-          // Direct count query for this specific plan
-          const { count, error } = await supabase
-            .from('user_subscriptions')
-            .select('*', { count: 'exact', head: true })
-            .eq('plan_id', plan.id)
-            .eq('status', 'active');
-          
-          if (error) {
-            console.error(`Error counting users for plan ${plan.name}:`, error);
-            return {
-              name: plan.name,
-              count: 0,
-              price: Number(plan.monthly_price) || 0
-            };
-          }
-          
-          console.log(`Plan ${plan.name} has ${count} active users`);
-          
-          return {
-            name: plan.name,
-            count: count || 0,
-            price: Number(plan.monthly_price) || 0
-          };
-        })
-      );
+      // Step 2: Get user subscriptions and count by plan
+      const { data: subscriptions, error: subscriptionsError } = await supabase
+        .from('user_subscriptions')
+        .select('plan_id')
+        .eq('status', 'active');
       
-      // Calculate total users for percentage
-      const totalUsers = planResults.reduce((sum, plan) => sum + plan.count, 0);
+      if (subscriptionsError) {
+        console.error("Error fetching user subscriptions:", subscriptionsError);
+        return;
+      }
       
-      // Create the formatted data for display
-      const planDetails: PlanDetails[] = planResults.map(plan => ({
-        plan: plan.name,
-        users: plan.count,
-        percentage: totalUsers > 0 ? Math.round((plan.count / totalUsers) * 100) : 0,
-        monthlyRevenue: plan.count * plan.price
-      }));
+      // Create a map of plan_id to count
+      const planCounts = new Map<string, number>();
       
-      const planDistribution: PlanDistribution[] = planResults.map(plan => ({
-        name: plan.name,
-        count: plan.count,
-        percentage: totalUsers > 0 ? Math.round((plan.count / totalUsers) * 100) : 0
-      }));
+      subscriptions?.forEach(sub => {
+        const currentCount = planCounts.get(sub.plan_id) || 0;
+        planCounts.set(sub.plan_id, currentCount + 1);
+      });
+      
+      // Calculate total users for percentage calculation
+      const totalActiveUsers = subscriptions?.length || 0;
+      
+      // Create plan distribution and details arrays
+      const planDistributionData: PlanDistribution[] = [];
+      const planDetailsData: PlanDetails[] = [];
+      
+      plans.forEach(plan => {
+        const userCount = planCounts.get(plan.plan_id) || 0;
+        const percentage = totalActiveUsers > 0 ? 
+          Math.round((userCount / totalActiveUsers) * 100) : 0;
+        const monthlyRevenue = userCount * Number(plan.monthly_price || 0);
+        
+        planDistributionData.push({
+          name: plan.name || 'Unknown Plan',
+          count: userCount,
+          percentage
+        });
+        
+        planDetailsData.push({
+          plan: plan.name || 'Unknown Plan',
+          users: userCount,
+          percentage,
+          monthlyRevenue
+        });
+      });
       
       // Sort by user count (highest first)
-      planDetails.sort((a, b) => b.users - a.users);
-      planDistribution.sort((a, b) => b.count - a.count);
+      planDistributionData.sort((a, b) => b.count - a.count);
+      planDetailsData.sort((a, b) => b.users - a.users);
       
-      console.log("Final real plan data:", planDetails);
+      console.log("Plan distribution data:", planDistributionData);
+      console.log("Plan details data:", planDetailsData);
       
-      // Update state with the data
-      setPlanDetails(planDetails);
-      setPlanDistribution(planDistribution);
-      
+      setPlanDistribution(planDistributionData);
+      setPlanDetails(planDetailsData);
     } catch (error) {
       console.error("Error in fetchPlanData:", error);
     }
   }
 
-  async function fetchPlanCounts() {
+  async function fetchUserPlanDetails() {
     try {
-      console.log("Fetching plan counts directly from user_subscriptions...");
+      console.log("Fetching user plan details...");
       
-      // Get the three plans: Starter, Pro, and Ultra
+      // Get all active subscriptions with user IDs and plan IDs
+      const { data: subscriptions, error: subscriptionsError } = await supabase
+        .from('user_subscriptions')
+        .select('user_id, plan_id')
+        .eq('status', 'active');
+      
+      if (subscriptionsError) {
+        console.error("Error fetching user subscriptions:", subscriptionsError);
+        return;
+      }
+      
+      if (!subscriptions || subscriptions.length === 0) {
+        console.log("No active subscriptions found");
+        return;
+      }
+      
+      // Extract unique user IDs and plan IDs
+      const userIds = [...new Set(subscriptions.map(sub => sub.user_id))];
+      const planIds = [...new Set(subscriptions.map(sub => sub.plan_id))];
+      
+      // Get users by their IDs
+      const { data: users, error: usersError } = await supabase
+        .from('users')
+        .select('id, email')
+        .in('id', userIds);
+      
+      if (usersError) {
+        console.error("Error fetching users:", usersError);
+        return;
+      }
+      
+      // Create a map of user IDs to user names (using email as fallback)
+      const userMap = new Map<string, string>();
+      users?.forEach(user => {
+        userMap.set(user.id, user.email || `User ${user.id.substring(0, 8)}`);
+      });
+      
+      // Get plans by their IDs
       const { data: plans, error: plansError } = await supabase
         .from('subscription_plans')
-        .select('id, name')
-        .or('name.ilike.%starter%,name.ilike.%pro%,name.ilike.%ultra%');
+        .select('plan_id, name')
+        .in('plan_id', planIds);
       
       if (plansError) {
-        console.error("Error fetching subscription plans:", plansError);
+        console.error("Error fetching plans:", plansError);
         return;
       }
       
-      if (!plans) {
-        console.log("No plans found");
-        return;
-      }
+      // Create a map of plan IDs to plan names
+      const planMap = new Map<string, string>();
+      plans?.forEach(plan => {
+        planMap.set(plan.plan_id, plan.name || `Plan ${plan.plan_id}`);
+      });
       
-      console.log("Found plans for counting:", plans.map(p => p.name).join(", "));
-      
-      // Get the exact count for each plan
-      const countPromises = plans.map(async (plan) => {
-        const { count, error } = await supabase
-          .from('user_subscriptions')
-          .select('*', { count: 'exact', head: true })
-          .eq('plan_id', plan.id)
-          .eq('status', 'active');
-        
-        if (error) {
-          console.error(`Error counting users for plan ${plan.name}:`, error);
-          return {
-            planName: plan.name,
-            count: 0
-          };
-        }
-        
-        console.log(`Direct count for ${plan.name}: ${count} users`);
-        
+      // Combine the data for display
+      const userPlanData: UserPlanDetail[] = subscriptions.map(sub => {
         return {
-          planName: plan.name,
-          count: count || 0
+          userId: sub.user_id,
+          userName: userMap.get(sub.user_id) || `User ${sub.user_id.substring(0, 8)}`,
+          planName: planMap.get(sub.plan_id) || `Plan ${sub.plan_id}`
         };
       });
       
-      const planCountsData = await Promise.all(countPromises);
+      console.log(`Found ${userPlanData.length} user-plan relationships`);
       
-      // Sort by count for better display
-      planCountsData.sort((a, b) => b.count - a.count);
-      
-      console.log("Final plan counts from direct queries:", planCountsData);
-      setPlanCounts(planCountsData);
+      setUserPlanDetails(userPlanData);
     } catch (error) {
-      console.error("Error in fetchPlanCounts:", error);
+      console.error("Error in fetchUserPlanDetails:", error);
     }
   }
 
@@ -500,7 +452,7 @@ export function OverviewTab() {
       <Card>
         <CardHeader>
           <CardTitle>Monthly User Growth</CardTitle>
-          <p className="text-sm text-muted-foreground">Total and paid users registered since March 2025</p>
+          <p className="text-sm text-muted-foreground">New users and subscriptions in the last 5 months</p>
         </CardHeader>
         <CardContent>
           <div className="h-80">
@@ -570,7 +522,6 @@ export function OverviewTab() {
         </Card>
       </div>
 
-     
       <Card>
         <CardHeader>
           <CardTitle>User Plan Details</CardTitle>
@@ -585,14 +536,22 @@ export function OverviewTab() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {userPlanDetails.map((user, index) => (
-                <TableRow key={index}>
-                  <TableCell className="font-medium">{user.userName}</TableCell>
-                  <TableCell>
-                    <Badge variant="outline">{user.planName}</Badge>
+              {userPlanDetails.length > 0 ? (
+                userPlanDetails.map((user, index) => (
+                  <TableRow key={user.userId + index}>
+                    <TableCell className="font-medium">{user.userName}</TableCell>
+                    <TableCell>
+                      <Badge variant="outline">{user.planName}</Badge>
+                    </TableCell>
+                  </TableRow>
+                ))
+              ) : (
+                <TableRow>
+                  <TableCell colSpan={2} className="text-center py-4 text-muted-foreground">
+                    No active subscriptions found
                   </TableCell>
                 </TableRow>
-              ))}
+              )}
             </TableBody>
           </Table>
         </CardContent>
