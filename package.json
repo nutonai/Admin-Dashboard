@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "dashboard": "next dev -p 3003"
+    "dashboard": "next dev -p 3003", 
+    "dashoard-prod" : "next start -p 3003"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",
